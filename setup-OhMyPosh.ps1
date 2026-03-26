@@ -42,7 +42,7 @@ function Prompt-Choice {
 
 # ── 1. Install Oh My Posh ────────────────────────────────────────────────────
 
-Write-Step "Installing Oh My Posh via winget"
+Write-Step "Installing Oh My Posh"
 
 $omp = Get-Command oh-my-posh -ErrorAction SilentlyContinue
 if ($omp) {
@@ -52,20 +52,43 @@ if ($omp) {
         winget install JanDeDobbeleer.OhMyPosh -s winget --accept-source-agreements --accept-package-agreements
     }
 } else {
-    winget install JanDeDobbeleer.OhMyPosh -s winget --accept-source-agreements --accept-package-agreements
-    Write-Ok "Oh My Posh installed"
+    Write-Host "   Trying winget..."
+    winget install JanDeDobbeleer.OhMyPosh -s winget --accept-source-agreements --accept-package-agreements 2>$null
+
+    # Refresh PATH and check if winget succeeded
+    $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
+                [System.Environment]::GetEnvironmentVariable("PATH", "User")
+
+    if (-not (Get-Command oh-my-posh -ErrorAction SilentlyContinue)) {
+        Write-Host "   winget failed, falling back to official install script..." -ForegroundColor Yellow
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        # Temporarily relax strict mode - the official install script uses
+        # $IsMacOS/$IsLinux which are undefined in Windows PowerShell 5.1
+        Set-StrictMode -Off
+        # Suppress the "Script Execution Risk" warning from Invoke-WebRequest
+        $PSDefaultParameterValues['Invoke-WebRequest:UseBasicParsing'] = $true
+        Invoke-Expression ((New-Object System.Net.WebClient).DownloadString('https://ohmyposh.dev/install.ps1'))
+        $PSDefaultParameterValues.Remove('Invoke-WebRequest:UseBasicParsing')
+        Set-StrictMode -Version Latest
+    }
 }
 
 # Refresh PATH so oh-my-posh is available in this session
 $env:PATH = [System.Environment]::GetEnvironmentVariable("PATH", "Machine") + ";" +
             [System.Environment]::GetEnvironmentVariable("PATH", "User")
 
+if (-not (Get-Command oh-my-posh -ErrorAction SilentlyContinue)) {
+    Write-Err "Oh My Posh installation failed. Check your internet connection and try again."
+    exit 1
+}
+Write-Ok "Oh My Posh installed"
+
 # ── 2. Deploy custom theme ───────────────────────────────────────────────────
 
 Write-Step "Deploying custom theme"
 
 $scriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$themeFiles  = Get-ChildItem -Path $scriptDir -Filter "*.omp.json" -ErrorAction SilentlyContinue
+$themeFiles  = @(Get-ChildItem -Path $scriptDir -Filter "*.omp.json" -ErrorAction SilentlyContinue)
 
 if (-not $themeFiles -or $themeFiles.Count -eq 0) {
     Write-Err "No .omp.json files found in script directory: $scriptDir"
@@ -131,7 +154,7 @@ $fontOptions = @(
     "CaskaydiaCove Nerd Font"
     "MesloLGS Nerd Font"
     "FiraCode Nerd Font"
-    "Skip — I already have one installed"
+    "Skip - I already have one installed"
 )
 $fontChoice = Prompt-Choice "Which Nerd Font would you like to install?" $fontOptions
 
@@ -148,7 +171,7 @@ $fontFaceMap = @{
     "FiraCode Nerd Font"       = "FiraCode Nerd Font"
 }
 
-if ($fontChoice -ne "Skip — I already have one installed") {
+if ($fontChoice -ne "Skip - I already have one installed") {
     $fontSlug  = $fontMap[$fontChoice]
     $fontZip   = Join-Path $env:TEMP "$fontSlug.zip"
     $fontDir   = Join-Path $env:TEMP "$fontSlug"
@@ -159,12 +182,18 @@ if ($fontChoice -ne "Skip — I already have one installed") {
 
     Expand-Archive -Path $fontZip -DestinationPath $fontDir -Force
 
-    Write-Host "   Installing fonts (this may require admin privileges) ..."
-    $shell = New-Object -ComObject Shell.Application
-    $fontsFolder = $shell.Namespace(0x14)   # Windows Fonts special folder
+    Write-Host "   Installing fonts ..."
+    $localFonts = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
+    if (-not (Test-Path $localFonts)) {
+        New-Item -Path $localFonts -ItemType Directory -Force | Out-Null
+    }
 
     Get-ChildItem -Path $fontDir -Include "*.ttf","*.otf" -Recurse | ForEach-Object {
-        $fontsFolder.CopyHere($_.FullName, 0x14)   # 0x14 = no prompt, overwrite
+        Copy-Item -Path $_.FullName -Destination $localFonts -Force
+        # Register the font for the current user
+        $regPath = "HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+        $fontName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
+        New-ItemProperty -Path $regPath -Name "$fontName (TrueType)" -Value $_.FullName -PropertyType String -Force | Out-Null
     }
 
     Write-Ok "$fontChoice installed"
@@ -240,13 +269,13 @@ if (-not $wtSettings) {
         selectionBackground = "#413829"
     }
 
-    if (-not $settings.schemes) {
+    if (-not $settings.PSObject.Properties['schemes']) {
         $settings | Add-Member -NotePropertyName "schemes" -NotePropertyValue @()
     }
 
     $hasElemental = $settings.schemes | Where-Object { $_.name -eq "Elemental" }
     if ($hasElemental) {
-        Write-Ok "Elemental color scheme already exists — skipping"
+        Write-Ok "Elemental color scheme already exists - skipping"
     } else {
         $settings.schemes += [PSCustomObject]$elementalScheme
         Write-Ok "Elemental color scheme added"
@@ -269,7 +298,7 @@ if (-not $wtSettings) {
         }
 
         # Set font face
-        if (-not $pwshProfile.font) {
+        if (-not $pwshProfile.PSObject.Properties['font']) {
             $pwshProfile | Add-Member -NotePropertyName "font" -NotePropertyValue ([PSCustomObject]@{ face = $terminalFontFace })
         } else {
             if ($pwshProfile.font.PSObject.Properties['face']) {
@@ -279,7 +308,7 @@ if (-not $wtSettings) {
             }
         }
 
-        Write-Ok "PowerShell profile updated — scheme: Elemental, font: $terminalFontFace"
+        Write-Ok "PowerShell profile updated - scheme: Elemental, font: $terminalFontFace"
     } else {
         Write-Err "No PowerShell profile found in Windows Terminal settings"
         Write-Host "   You may need to set the font and color scheme manually."
@@ -302,9 +331,9 @@ Write-Host "  Font:     $terminalFontFace"
 Write-Host "  Scheme:   Elemental"
 Write-Host "  Profile:  $PROFILE"
 Write-Host ""
-Write-Host "  Reload your profile now with:" -ForegroundColor Yellow
-Write-Host "    . `$PROFILE" -ForegroundColor White
-Write-Host ""
 Write-Host "  If icons look broken, restart Windows Terminal" -ForegroundColor Yellow
 Write-Host "  so the new font takes effect." -ForegroundColor Yellow
 Write-Host ""
+
+# Activate Oh My Posh in the current session
+. $PROFILE
