@@ -16,6 +16,20 @@ An interactive PowerShell script that automates the full Oh My Posh setup on Win
 - PowerShell 5.1 or later (PowerShell 7+ recommended)
 - [Windows Terminal](https://aka.ms/terminal) installed
 - [winget](https://learn.microsoft.com/en-us/windows/package-manager/winget/) available (comes with modern Windows)
+ 
+- Open Windows Terminal as Administrator (right-click → Run as administrator), then run:
+
+      winget source reset --force
+
+- That one command fixes winget. After that, close the admin window, open a regular terminal, and run:
+
+      winget install pwsh
+
+- Close and re open a regular terminal window and run:
+
+      pwsh --version
+
+- You should be on version 7+
 
 ## Quick Start
 

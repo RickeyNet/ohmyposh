@@ -183,17 +183,26 @@ if ($fontChoice -ne "Skip - I already have one installed") {
     Expand-Archive -Path $fontZip -DestinationPath $fontDir -Force
 
     Write-Host "   Installing fonts ..."
-    $localFonts = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
-    if (-not (Test-Path $localFonts)) {
-        New-Item -Path $localFonts -ItemType Directory -Force | Out-Null
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+    if ($isAdmin) {
+        # System-wide install so all users get the fonts
+        $fontsDir = Join-Path $env:SystemRoot "Fonts"
+        $regPath  = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+    } else {
+        # Per-user install
+        $fontsDir = Join-Path $env:LOCALAPPDATA "Microsoft\Windows\Fonts"
+        $regPath  = "HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+        if (-not (Test-Path $fontsDir)) {
+            New-Item -Path $fontsDir -ItemType Directory -Force | Out-Null
+        }
     }
 
     Get-ChildItem -Path $fontDir -Include "*.ttf","*.otf" -Recurse | ForEach-Object {
-        Copy-Item -Path $_.FullName -Destination $localFonts -Force
-        # Register the font for the current user
-        $regPath = "HKCU:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts"
+        $destPath = Join-Path $fontsDir $_.Name
+        Copy-Item -Path $_.FullName -Destination $destPath -Force
         $fontName = [System.IO.Path]::GetFileNameWithoutExtension($_.Name)
-        New-ItemProperty -Path $regPath -Name "$fontName (TrueType)" -Value $_.FullName -PropertyType String -Force | Out-Null
+        New-ItemProperty -Path $regPath -Name "$fontName (TrueType)" -Value $destPath -PropertyType String -Force | Out-Null
     }
 
     Write-Ok "$fontChoice installed"
